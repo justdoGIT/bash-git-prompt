@@ -3,7 +3,9 @@
 # being displayed.
 
 git_prompt_help() {
+  # shellcheck disable=SC1091
   source "${__GIT_PROMPT_DIR}/prompt-colors.sh"
+  # shellcheck disable=SC1091
   source "${__GIT_PROMPT_DIR}/themes/Default.bgptheme"
 
  cat <<EOF | sed 's/\\\[\\033//g' | sed 's/\\\]//g'
@@ -37,6 +39,7 @@ help_git_prompt() { git_prompt_help ; }
 git_prompt_examples() {
 
   format_branch() {
+    # shellcheck disable=SC2254
     case "$1" in
       ${GIT_PROMPT_MASTER_BRANCHES})
         echo "${GIT_PROMPT_MASTER_BRANCH}$1${ResetColor}"
@@ -52,18 +55,18 @@ git_prompt_examples() {
   cat <<EOF | sed 's/\\\[\\033//g' | sed 's/\\\]//g'
 These are examples of the git prompt:
 
-  ${p}`format_branch master`${GIT_PROMPT_REMOTE}${GIT_PROMPT_SYMBOLS_AHEAD}3${ResetColor}|${GIT_PROMPT_CHANGED}1${ResetColor}${s}  - on branch "master", ahead of remote by 3 commits, 1
+  ${p}$(format_branch master)${GIT_PROMPT_REMOTE}${GIT_PROMPT_SYMBOLS_AHEAD}3${ResetColor}|${GIT_PROMPT_CHANGED}1${ResetColor}${s}  - on branch "master", ahead of remote by 3 commits, 1
                      file changed but not staged
 
-  ${p}`format_branch status`${GIT_PROMPT_SEPARATOR}${GIT_PROMPT_STAGED}2${ResetColor}${s}     - on branch "status", 2 files staged
+  ${p}$(format_branch status)${GIT_PROMPT_SEPARATOR}${GIT_PROMPT_STAGED}2${ResetColor}${s}     - on branch "status", 2 files staged
 
-  ${p}`format_branch master`${GIT_PROMPT_SEPARATOR}${GIT_PROMPT_CHANGED}7${GIT_PROMPT_UNTRACKED}${ResetColor}${s}   - on branch "master", 7 files changed, some files untracked
+  ${p}$(format_branch master)${GIT_PROMPT_SEPARATOR}${GIT_PROMPT_CHANGED}7${GIT_PROMPT_UNTRACKED}${ResetColor}${s}   - on branch "master", 7 files changed, some files untracked
 
-  ${p}`format_branch master`${GIT_PROMPT_SEPARATOR}${GIT_PROMPT_CONFLICTS}2${GIT_PROMPT_CHANGED}3${ResetColor}${s}  - on branch "master", 2 conflicts, 3 files changed
+  ${p}$(format_branch master)${GIT_PROMPT_SEPARATOR}${GIT_PROMPT_CONFLICTS}2${GIT_PROMPT_CHANGED}3${ResetColor}${s}  - on branch "master", 2 conflicts, 3 files changed
 
-  ${p}`format_branch master`${GIT_PROMPT_SEPARATOR}${GIT_PROMPT_STASHED}2${ResetColor}${s}     - on branch "master", 2 stash entries
+  ${p}$(format_branch master)${GIT_PROMPT_SEPARATOR}${GIT_PROMPT_STASHED}2${ResetColor}${s}     - on branch "master", 2 stash entries
 
-  ${p}`format_branch experimental`${GIT_PROMPT_REMOTE}${GIT_PROMPT_SYMBOLS_BEHIND}2${GIT_PROMPT_SYMBOLS_AHEAD}3${ResetColor}${GIT_PROMPT_SEPARATOR}${GIT_PROMPT_CLEAN}${ResetColor}${s}
+  ${p}$(format_branch experimental)${GIT_PROMPT_REMOTE}${GIT_PROMPT_SYMBOLS_BEHIND}2${GIT_PROMPT_SYMBOLS_AHEAD}3${ResetColor}${GIT_PROMPT_SEPARATOR}${GIT_PROMPT_CLEAN}${ResetColor}${s}
                    - on branch "experimental"; your branch has diverged
                      by 3 commits, remote by 2 commits; the repository is
                      otherwise clean
@@ -71,7 +74,7 @@ These are examples of the git prompt:
   ${p}${GIT_PROMPT_BRANCH}${GIT_PROMPT_SYMBOLS_PREHASH}70c2952${ResetColor}${GIT_PROMPT_SEPARATOR}${GIT_PROMPT_CLEAN}${ResetColor}${s}    - not on any branch; parent commit has hash "70c2952"; the
                      repository is otherwise clean
 
-  ${p}`format_branch extra-features`${GIT_PROMPT_SYMBOLS_NO_REMOTE_TRACKING}${ResetColor}${GIT_PROMPT_SEPARATOR}${GIT_PROMPT_CHANGED}2${GIT_PROMPT_UNTRACKED}4${ResetColor}${s}
+  ${p}$(format_branch extra-features)${GIT_PROMPT_SYMBOLS_NO_REMOTE_TRACKING}${ResetColor}${GIT_PROMPT_SEPARATOR}${GIT_PROMPT_CHANGED}2${GIT_PROMPT_UNTRACKED}4${ResetColor}${s}
                    - on branch "extra-features"; no remote set (signalled by '${GIT_PROMPT_SYMBOLS_NO_REMOTE_TRACKING}${ResetColor}'),
                      2 files changed and 4 untracked files exist
 EOF
@@ -80,16 +83,18 @@ EOF
 git_prompt_color_samples() {
 
   showColor() {
-    local color=$(eval echo "\${${1}}")
+    local color
+    color=$(eval echo "\${${1}}")
     echo -e "${color}${1}${ResetColor}" | sed 's/\\\]//g'  | sed 's/\\\[//g'
   }
 
   local x=0
   while (( x < 8 )) ; do
-    showColor "${ColorNames[@]:$x:1}"
-    showColor "Dim${ColorNames[@]:$x:1}"
-    showColor "Bold${ColorNames[@]:$x:1}"
-    showColor "Bright${ColorNames[@]:$x:1}"
+    local color_name="${ColorNames[$x]}"
+    showColor "${color_name}"
+    showColor "Dim${color_name}"
+    showColor "Bold${color_name}"
+    showColor "Bright${color_name}"
     (( x++ ))
   done
 }

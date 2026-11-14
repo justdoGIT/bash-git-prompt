@@ -5,16 +5,16 @@
 
 function async_run() {
   {
-    eval "$@" &> /dev/null
-  }&
+    eval "$*" &> /dev/null
+  } 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 }
 
 function async_run_zsh() {
   {
-    eval "$@" &> /dev/null
+    eval "$*" &> /dev/null
 
   # `true` is used here to allow bash to parse the script, as the zsh `&!` syntax will otherwise stop parsing prior to any execution.
-  }&! true
+  } 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &! true
 }
 
 
@@ -26,10 +26,16 @@ function set_git_prompt_dir() {
 }
 
 function echoc() {
-  echo -e "${1}${2}${ResetColor}" | sed 's/\\\]//g'  | sed 's/\\\[//g'
+  local out="${1}${2}${ResetColor}"
+  out="${out//\\\]/}"
+  out="${out//\\\[/}"
+  echo -e "${out}"
 }
 
 function get_theme() {
+  # If theme file is already resolved, skip resolution (git_prompt_reset clears this)
+  [[ -n "${__GIT_PROMPT_THEME_FILE+x}" ]] && return
+
   local CUSTOM_THEME_FILE="${HOME}/.git-prompt-colors.sh"
   if [[ ! (-z "${GIT_PROMPT_THEME_FILE:+x}" ) ]]; then
     CUSTOM_THEME_FILE="${GIT_PROMPT_THEME_FILE}"
@@ -58,7 +64,8 @@ function get_theme() {
 
       # use default theme, if theme was not found
       for themefile in "${__GIT_PROMPT_DIR}/themes/"*.bgptheme; do
-        local basename=${themefile##*/}
+        local basename
+        basename=${themefile##*/}
         if [[ "${basename%.bgptheme}" = "${GIT_PROMPT_THEME}" ]]; then
           theme="${GIT_PROMPT_THEME}"
           break
@@ -75,8 +82,10 @@ function get_theme() {
 }
 
 function git_prompt_load_colors() {
+  [[ -n "${__PROMPT_COLORS_FILE+x}" ]] && return   # already loaded
   if gp_set_file_var __PROMPT_COLORS_FILE prompt-colors.sh ; then
     # outsource the color defs
+    # shellcheck disable=SC1090
     source "${__PROMPT_COLORS_FILE}"
   else
     echo 1>&2 "Cannot find prompt-colors.sh!"
@@ -86,11 +95,19 @@ function git_prompt_load_colors() {
 function git_prompt_load_theme() {
   get_theme
   local DEFAULT_THEME_FILE="${__GIT_PROMPT_DIR}/themes/Default.bgptheme"
+  # Only re-source if the theme file changed since last load
+  if [[ "${__GIT_PROMPT_THEME_FILE}" == "${__GIT_PROMPT_THEME_FILE_LOADED-}" ]]; then
+    return
+  fi
+  # shellcheck disable=SC1090,SC1091
   source "${DEFAULT_THEME_FILE}"
+  # shellcheck disable=SC1090
   source "${__GIT_PROMPT_THEME_FILE}"
+  __GIT_PROMPT_THEME_FILE_LOADED="${__GIT_PROMPT_THEME_FILE}"
 }
 
 function git_prompt_list_themes() {
+  # shellcheck disable=SC2154
   git_prompt_load_colors
   get_theme
 
@@ -98,6 +115,7 @@ function git_prompt_list_themes() {
     local basename="${themefile##*/}"
     local theme="${basename%.bgptheme}"
     if [[ "${GIT_PROMPT_THEME}" = "${theme}" ]]; then
+      # shellcheck disable=SC2154
       echoc "${Red}" "*${theme}"
     else
       echo "${theme}"
@@ -105,6 +123,7 @@ function git_prompt_list_themes() {
   done
 
   if [[ "${GIT_PROMPT_THEME}" = "Custom" ]]; then
+    # shellcheck disable=SC2154
     echoc "${Magenta}" "*Custom"
   else
     echoc "${Blue}" "Custom"
@@ -112,6 +131,7 @@ function git_prompt_list_themes() {
 }
 
 function git_prompt_make_custom_theme() {
+  # shellcheck disable=SC2154
   if [[ -r "${HOME}/.git-prompt-colors.sh" ]]; then
     echoc "${Red}" "You have already created a custom theme!"
   else
@@ -282,13 +302,16 @@ function git_prompt_config() {
     EMPTY_PROMPT="${OLD_GITPROMPT}"
   elif [[ "${GIT_PROMPT_WITH_VIRTUAL_ENV:-1}" == 1 ]]; then
     if [[ "${GIT_PROMPT_VIRTUAL_ENV_AFTER_PROMPT:-0}" == "0" ]]; then
-      local ps="$(gp_add_virtualenv_to_prompt)${PROMPT_START}$(${prompt_callback})${PROMPT_END}"
+      local ps
+      ps="$(gp_add_virtualenv_to_prompt)${PROMPT_START}$(${prompt_callback})${PROMPT_END}"
     else
-      local ps="${PROMPT_START}$(${prompt_callback})$(gp_add_virtualenv_to_prompt)${PROMPT_END}"
+      local ps
+      ps="${PROMPT_START}$(${prompt_callback})$(gp_add_virtualenv_to_prompt)${PROMPT_END}"
     fi
     EMPTY_PROMPT="${ps//_LAST_COMMAND_INDICATOR_/${LAST_COMMAND_INDICATOR}}"
   else
-    local ps="${PROMPT_START}$(${prompt_callback})${PROMPT_END}"
+    local ps
+    ps="${PROMPT_START}$(${prompt_callback})${PROMPT_END}"
     EMPTY_PROMPT="${ps//_LAST_COMMAND_INDICATOR_/${LAST_COMMAND_INDICATOR}}"
   fi
 
@@ -310,28 +333,27 @@ function setLastCommandState() {
   return ${GIT_PROMPT_LAST_COMMAND_STATE}
 }
 
-function we_are_on_repo() {
-  if [[ -e "$(git rev-parse --git-dir 2> /dev/null)" ]]; then
-    echo 1
-  else
-    echo 0
-  fi
-}
-
 function update_old_git_prompt() {
   if [[ "${GIT_PROMPT_OLD_DIR_WAS_GIT:-0}" = 0 ]]; then
+    OLD_PROMPT_START="${PROMPT_START}"
+    OLD_PROMPT_END="${PROMPT_END}"
     OLD_GITPROMPT="${PS1}"
   fi
-
-  GIT_PROMPT_OLD_DIR_WAS_GIT=$(we_are_on_repo)
 }
 
 function setGitPrompt() {
-  update_old_git_prompt
+  # Single git call — reused for both the "are we in a repo" check and later use
+  local repo
+  repo=$(git rev-parse --show-toplevel 2> /dev/null)
 
-  local repo=$(git rev-parse --show-toplevel 2> /dev/null)
+  # update_old_git_prompt reads GIT_PROMPT_OLD_DIR_WAS_GIT (previous cycle's value)
+  # to decide whether to save PS1, so call it before updating the flag.
+  update_old_git_prompt
+  GIT_PROMPT_OLD_DIR_WAS_GIT=$([[ -e "${repo}" ]] && echo 1 || echo 0)
   if [[ ! -e "${repo}" ]] && [[ "${GIT_PROMPT_ONLY_IN_REPO-}" = 1 ]]; then
     # we do not permit bash-git-prompt outside git repos, so nothing to do
+    PROMPT_START=${OLD_PROMPT_START}
+    PROMPT_END=${OLD_PROMPT_END}
     PS1="${OLD_GITPROMPT}"
     return
   fi
@@ -341,13 +363,13 @@ function setGitPrompt() {
 
   git_prompt_config
 
-  if [[ ! -e "${repo}" ]] || [[ "${GIT_PROMPT_DISABLE-}" = 1 ]]; then
+  if [[ ! -e "${repo}" ]] || [[ "${GIT_PROMPT_DISABLE-}" = 1 ]] || [[ "${COPILOT_AGENT-}" = 1 ]]; then
     PS1="${EMPTY_PROMPT}"
     return
   fi
 
   local FETCH_REMOTE_STATUS=1
-  if [[ "${GIT_PROMPT_FETCH_REMOTE_STATUS}" = 0 ]]; then
+  if [[ "${GIT_PROMPT_FETCH_REMOTE_STATUS-}" = 0 ]]; then
     FETCH_REMOTE_STATUS=0
   fi
 
@@ -367,6 +389,7 @@ function setGitPrompt() {
     if grep -q -v -E "${CONFIG_SYNTAX}" "${repo}/.bash-git-rc"; then
       echo ".bash-git-rc can only contain variable values on the form NAME=value. Ignoring file." >&2
     else
+      # shellcheck disable=SC1091
       source "${repo}/.bash-git-rc"
     fi
   fi
@@ -441,14 +464,21 @@ function olderThanMinutes() {
 }
 
 function checkUpstream() {
-  local GIT_PROMPT_FETCH_TIMEOUT
-  git_prompt_config
+  # In a worktree, .git is a file rather than a directory; FETCH_HEAD lives in
+  # the common git dir, not the worktree-local one. Avoid a subprocess for the
+  # normal case by only calling git-rev-parse when .git is a file.
+  local git_common_dir
+  if [[ -f "${repo}/.git" ]]; then
+    git_common_dir="$(git rev-parse --git-common-dir 2>/dev/null)"
+  else
+    git_common_dir="${repo}/.git"
+  fi
+  local FETCH_HEAD="${git_common_dir}/FETCH_HEAD"
 
-  local FETCH_HEAD="${repo}/.git/FETCH_HEAD"
-  # Fech repo if local is stale for more than $GIT_FETCH_TIMEOUT minutes
+  # Fetch repo if local is stale for more than $GIT_FETCH_TIMEOUT minutes
   if [[ ! -e "${FETCH_HEAD}" ]] || olderThanMinutes "${FETCH_HEAD}" "${GIT_PROMPT_FETCH_TIMEOUT}"
   then
-    if [[ -n $(git remote show) ]]; then
+    if [[ -n $(git remote) ]]; then
       (
         if [ -n "$ZSH_VERSION" ]; then
           async_run_zsh "GIT_TERMINAL_PROMPT=0 git fetch --quiet"
@@ -482,22 +512,41 @@ function replaceSymbols() {
 
 function createPrivateIndex {
   # Create a copy of the index to avoid conflicts with parallel git commands, e.g. git rebase.
-  local __GIT_INDEX_FILE
-  local __GIT_INDEX_PRIVATE
-  if [[ -z "${GIT_INDEX_FILE+x}" ]]; then
-    __GIT_INDEX_FILE="$(git rev-parse --git-dir)/index"
+  # Skip the copy when no parallel git operation is in progress (rebase, merge, cherry-pick, etc.)
+  # to avoid paying the cost of copying a potentially large index file on every prompt.
+  local git_dir
+  if [[ -n "${GIT_INDEX_FILE+x}" ]]; then
+    # GIT_INDEX_FILE already set externally — use it, derive git_dir from it
+    git_dir="$(dirname "${GIT_INDEX_FILE}")"
   else
-    __GIT_INDEX_FILE="${GIT_INDEX_FILE}"
+    git_dir="$(git rev-parse --git-dir 2>/dev/null)"
   fi
-  __GIT_INDEX_PRIVATE="${TMPDIR:-/tmp}/git-index-private$$"
-  command cp "${__GIT_INDEX_FILE}" "${__GIT_INDEX_PRIVATE}" 2>/dev/null
-  echo "${__GIT_INDEX_PRIVATE}"
+
+  local index_file="${GIT_INDEX_FILE:-${git_dir}/index}"
+
+  local needs_copy=0
+  [[ -d "${git_dir}/rebase-merge" ]]     && needs_copy=1
+  [[ -d "${git_dir}/rebase-apply" ]]     && needs_copy=1
+  [[ -f "${git_dir}/MERGE_HEAD" ]]       && needs_copy=1
+  [[ -f "${git_dir}/CHERRY_PICK_HEAD" ]] && needs_copy=1
+
+  if [[ "${needs_copy}" == 1 ]]; then
+    local private="$(mktemp "${TMPDIR:-/tmp}/git-index-private$$.XXXXXX")"
+    command cp "${index_file}" "${private}" 2>/dev/null
+    if [ $? -ne 0 ]; then
+      return
+    fi
+    echo "${private}"
+  else
+    echo "${index_file}"
+  fi
 }
 
 function get_branch_prefix() {
     local GIT_BRANCH="${1}"
     local DETACHED_HEAD="${2}"
 
+    # shellcheck disable=SC2254
     case "$GIT_BRANCH" in
       ${GIT_PROMPT_MASTER_BRANCHES})
         local IS_MASTER_BRANCH=1
@@ -517,17 +566,10 @@ function get_branch_prefix() {
 }
 
 function updatePrompt() {
-  local LAST_COMMAND_INDICATOR
-  local PROMPT_LEADING_SPACE
-  local PROMPT_START
-  local PROMPT_END
-  local EMPTY_PROMPT
   local Blue="\[\033[0;34m\]"
-  if [ -n "$ZSH_VERSION" ]; then
+  if [ -n "${ZSH_VERSION-}" ]; then
     Blue='%{fg[blue]%}'
   fi
-
-  git_prompt_config
 
   export __GIT_PROMPT_IGNORE_STASH="${GIT_PROMPT_IGNORE_STASH:-0}"
   export __GIT_PROMPT_SHOW_UPSTREAM="${GIT_PROMPT_SHOW_UPSTREAM:-0}"
@@ -537,27 +579,39 @@ function updatePrompt() {
   export __GIT_PROMPT_SHOW_UNTRACKED_FILES="${GIT_PROMPT_SHOW_UNTRACKED_FILES-normal}"
   export __GIT_PROMPT_SHOW_CHANGED_FILES_COUNT="${GIT_PROMPT_SHOW_CHANGED_FILES_COUNT:-1}"
 
-  local GIT_INDEX_PRIVATE="$(createPrivateIndex)"
+  local GIT_INDEX_PRIVATE
+  GIT_INDEX_PRIVATE="$(createPrivateIndex)"
   #important to define GIT_INDEX_FILE as local: This way it only affects this function (and below) - even with the export afterwards
   local GIT_INDEX_FILE
+  if [ -z "$GIT_INDEX_PRIVATE" ]; then
+    return
+  fi
   export GIT_INDEX_FILE="${GIT_INDEX_PRIVATE}"
 
   local -a git_status_fields
-  while IFS=$'\n' read -r line; do git_status_fields+=("${line}"); done < <("${__GIT_STATUS_CMD}" 2>/dev/null)
+  while IFS=$'\n' read -r line; do git_status_fields+=("${line}"); done < <("${__GIT_STATUS_CMD}" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- 2>/dev/null)
 
-  export GIT_BRANCH=$(replaceSymbols "${git_status_fields[@]:0:1}")
+  # Index git_status_fields with the ${array[@]:offset:length} slice form: its
+  # offset is 0-based in both bash and zsh, whereas direct ${array[N]} indexing
+  # is 0-based in bash but 1-based in zsh, which breaks the prompt under zsh.
+  # The slice-into-scalar triggers shellcheck SC2124, but is intentional here.
+  export GIT_BRANCH
+  GIT_BRANCH=$(replaceSymbols "${git_status_fields[@]:0:1}")
   if [[ $__GIT_PROMPT_SHOW_TRACKING != "0" ]]; then
-    local GIT_REMOTE="$(replaceSymbols "${git_status_fields[@]:1:1}")"
+    local GIT_REMOTE
+    GIT_REMOTE="$(replaceSymbols "${git_status_fields[@]:1:1}")"
     if [[ "." == "${GIT_REMOTE}" ]]; then
       unset GIT_REMOTE
     fi
   fi
-  local GIT_REMOTE_USERNAME_REPO="$(replaceSymbols "${git_status_fields[@]:2:1}")"
+  local GIT_REMOTE_USERNAME_REPO
+  GIT_REMOTE_USERNAME_REPO="$(replaceSymbols "${git_status_fields[@]:2:1}")"
   if [[ "." == "${GIT_REMOTE_USERNAME_REPO}" ]]; then
     unset GIT_REMOTE_USERNAME_REPO
   fi
 
   local GIT_FORMATTED_UPSTREAM
+  # shellcheck disable=SC2124
   local GIT_UPSTREAM_PRIVATE="${git_status_fields[@]:3:1}"
   if [[ "${__GIT_PROMPT_SHOW_UPSTREAM:-0}" != "1" || "^" == "${GIT_UPSTREAM_PRIVATE}" ]]; then
     unset GIT_FORMATTED_UPSTREAM
@@ -565,12 +619,19 @@ function updatePrompt() {
     GIT_FORMATTED_UPSTREAM="${GIT_PROMPT_UPSTREAM//_UPSTREAM_/${GIT_UPSTREAM_PRIVATE}}"
   fi
 
+  # shellcheck disable=SC2034,SC2124
   local GIT_STAGED="${git_status_fields[@]:4:1}"
+  # shellcheck disable=SC2034,SC2124
   local GIT_CONFLICTS="${git_status_fields[@]:5:1}"
+  # shellcheck disable=SC2034,SC2124
   local GIT_CHANGED="${git_status_fields[@]:6:1}"
+  # shellcheck disable=SC2034,SC2124
   local GIT_UNTRACKED="${git_status_fields[@]:7:1}"
+  # shellcheck disable=SC2034,SC2124
   local GIT_STASHED="${git_status_fields[@]:8:1}"
+  # shellcheck disable=SC2124
   local GIT_CLEAN="${git_status_fields[@]:9:1}"
+  # shellcheck disable=SC2124
   local GIT_DETACHED_HEAD="${git_status_fields[@]:10:1}"
 
   local NEW_PROMPT="${EMPTY_PROMPT}"
@@ -586,8 +647,9 @@ function updatePrompt() {
       fi
     fi
 
-    local BRANCH_PREFIX="$(get_branch_prefix $GIT_BRANCH $GIT_DETACHED_HEAD)"
-    local STATUS_PREFIX="${PROMPT_LEADING_SPACE}${GIT_PROMPT_PREFIX_FINAL}${BRANCH_PREFIX}\${GIT_BRANCH}${ResetColor}${GIT_FORMATTED_UPSTREAM}"
+    local BRANCH_PREFIX
+    BRANCH_PREFIX="$(get_branch_prefix "${GIT_BRANCH}" "${GIT_DETACHED_HEAD}")"
+    local STATUS_PREFIX="${PROMPT_LEADING_SPACE}${GIT_PROMPT_PREFIX_FINAL}${BRANCH_PREFIX}\${GIT_BRANCH}${ResetColor}${GIT_FORMATTED_UPSTREAM-}"
     local STATUS=""
 
     # __add_status KIND VALEXPR INSERT
@@ -609,10 +671,6 @@ function updatePrompt() {
       fi
     }
 
-    __add_gitvar_status() {
-      __add_status "\${GIT_PROMPT_${1}}\${GIT_${1}}\${ResetColor}"
-    }
-
     # __add_status SOMETEXT
     __add_status() {
       eval "STATUS=\"${STATUS}${1}\""
@@ -621,7 +679,7 @@ function updatePrompt() {
     __chk_gitvar_status 'REMOTE'       '-n'
     if [[ "${GIT_CLEAN}" -eq 0 ]] || [[ "${GIT_PROMPT_CLEAN}" != "" ]]; then
       __add_status        "${GIT_PROMPT_SEPARATOR}"
-      __chk_gitvar_status 'STAGED'     '!= "0" && ${GIT_STAGED-} != "^"'
+      __chk_gitvar_status 'STAGED'     "!= \"0\" && \${GIT_STAGED-} != \"^\""
       __chk_gitvar_status 'CONFLICTS'  '!= "0"'
       __chk_gitvar_status 'CHANGED'    '!= "0"'
       __chk_gitvar_status 'UNTRACKED'  '!= "0"'
@@ -640,7 +698,9 @@ function updatePrompt() {
   fi
 
   PS1="${NEW_PROMPT//_LAST_COMMAND_INDICATOR_/${LAST_COMMAND_INDICATOR}${ResetColor}}"
-  command rm "${GIT_INDEX_PRIVATE}" 2>/dev/null
+  # Only remove if it was a temporary copy (path contains "git-index-private")
+  [[ "${GIT_INDEX_PRIVATE}" == *git-index-private* ]] && \
+    command rm "${GIT_INDEX_PRIVATE}" 2>/dev/null
 }
 
 # Helper function that returns virtual env information to be set in prompt
@@ -649,7 +709,13 @@ function gp_add_virtualenv_to_prompt {
   local ACCUMULATED_VENV_PROMPT=""
   local VENV=""
   if [[ -n "${VIRTUAL_ENV-}" && -z "${VIRTUAL_ENV_DISABLE_PROMPT+x}" ]]; then
-    VENV=$(basename "${VIRTUAL_ENV}")
+    if [[ -n "${VIRTUAL_ENV_PROMPT-}" ]]; then
+      # first trim any starting white space and parenthesis, and then do the same to the end
+      VENV="${VIRTUAL_ENV_PROMPT#"${VIRTUAL_ENV_PROMPT%%[![:space:]]*}("}"
+      VENV="${VENV%")${VENV##*[![:space:]]}"}"
+    else
+      VENV=$(basename "${VIRTUAL_ENV}")
+    fi
     ACCUMULATED_VENV_PROMPT="${ACCUMULATED_VENV_PROMPT}${GIT_PROMPT_VIRTUALENV//_VIRTUALENV_/${VENV}}"
   fi
   if [[ -n "${NODE_VIRTUAL_ENV-}" && -z "${NODE_VIRTUAL_ENV_DISABLE_PROMPT+x}" ]]; then
@@ -681,7 +747,7 @@ function gp_truncate_pwd {
 
 # Sets the window title to the given argument string
 function gp_set_window_title {
-  echo -ne "\[\033]0;"${@}"\007\]"
+  echo -ne "\[\033]0;$1\007\]"
 }
 
 function prompt_callback_default {
@@ -734,9 +800,25 @@ function add_to_end_of_prompt_command() {
 }
 
 function gp_install_prompt {
-  make_prompt_command_clean
-  add_to_end_of_prompt_command "setGitPrompt"
-  add_to_beginning_of_prompt_command "setLastCommandState"
+  # 5.1 supports PROMPT_COMMAND as an array
+  if ((BASH_VERSINFO[0] > 5 || BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1)); then
+    if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare --"* ]]; then
+      make_prompt_command_clean
+      add_to_end_of_prompt_command "setGitPrompt"
+      add_to_beginning_of_prompt_command "setLastCommandState"
+    else
+      if [[ "${PROMPT_COMMAND[*]}" != *setGitPrompt* ]]; then
+        PROMPT_COMMAND+=(setGitPrompt)
+      fi
+      if [[ "${PROMPT_COMMAND[*]}" != *setLastCommandState* ]]; then
+        PROMPT_COMMAND=(setLastCommandState "${PROMPT_COMMAND[@]}")
+      fi
+    fi
+  else
+    make_prompt_command_clean
+    add_to_end_of_prompt_command "setGitPrompt"
+    add_to_beginning_of_prompt_command "setLastCommandState"
+  fi
 
   set_git_prompt_dir
   source "${__GIT_PROMPT_DIR}/git-prompt-help.sh"
